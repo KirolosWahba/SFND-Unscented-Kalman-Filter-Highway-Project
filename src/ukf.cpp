@@ -30,10 +30,10 @@ UKF::UKF() {
   P_ = MatrixXd(n_x_, n_x_);
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 2;
+  std_a_ = 2.0;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 15;
+  std_yawdd_ = 2.0;
   
   /**
    * DO NOT MODIFY measurement noise values below.
@@ -61,7 +61,7 @@ UKF::UKF() {
 
   // Set the initialization flag
   is_initialized_ = false;
-
+  
   // Initialize the weights
   weights_ = VectorXd(2*n_aug_+1);
   weights_.fill(1/(2*(lambda_+n_aug_)));
@@ -69,7 +69,7 @@ UKF::UKF() {
 
   // predicted sigma points matrix
   Xsig_pred_ = MatrixXd(n_x_, 2 * n_aug_ + 1);
-
+  
   // Lidar state to measurement mapping matrix
   Lidar_H_ = MatrixXd(2, n_x_);
   Lidar_H_.fill(0.0);
@@ -112,15 +112,16 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     time_us_ = meas_package.timestamp_;
 
     x_.fill(0.0);
-    if(meas_package.sensor_type_ == meas_package.LASER){
+    if(meas_package.sensor_type_ == MeasurementPackage::LASER){
       x_(0) = meas_package.raw_measurements_(0); //Px
       x_(1) = meas_package.raw_measurements_(1); //Py
 
       P_ << std_laspx_*std_laspx_, 0, 0, 0, 0,
             0, std_laspy_*std_laspy_, 0, 0, 0,
-            0, 0, 100, 0, 0,
-            0, 0, 0, 40, 0,
-            0, 0, 0, 0, 40;
+            0, 0, 1, 0, 0,
+            0, 0, 0, 1, 0,
+            0, 0, 0, 0, 1;
+
     } else {
       double rho = meas_package.raw_measurements_(0);
       double phi = meas_package.raw_measurements_(1);
@@ -129,24 +130,22 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
 
       P_ << (std_radr_+std_radphi_)*(std_radr_+std_radphi_), 0, 0, 0, 0,
             0, (std_radr_+std_radphi_)*(std_radr_+std_radphi_), 0, 0, 0,
-            0, 0, 100, 0, 0,
-            0, 0, 0, 40, 0,
-            0, 0, 0, 0, 40;
+            0, 0, 1, 0, 0,
+            0, 0, 0, 1, 0,
+            0, 0, 0, 0, 1;
     }
   }
 }
 
 void UKF::Prediction(double delta_t) {
-  if(is_initialized_){
-    // create sigma point matrix
-    MatrixXd Xsig_aug(n_aug_, 2 * n_aug_ + 1);
+  // create sigma point matrix
+  MatrixXd Xsig_aug(n_aug_, 2 * n_aug_ + 1);
 
-    GenerateSigmaPoints(Xsig_aug);
-    
-    SigmaPointsPrediction(Xsig_aug, delta_t);
+  GenerateSigmaPoints(Xsig_aug);
+  
+  SigmaPointsPrediction(Xsig_aug, delta_t);
 
-    PredictMeanAndCovariance();
-  }
+  PredictMeanAndCovariance();
 }
 
 void UKF::GenerateSigmaPoints(MatrixXd &Xsig_aug) {
@@ -176,27 +175,46 @@ void UKF::GenerateSigmaPoints(MatrixXd &Xsig_aug) {
 
 void UKF::SigmaPointsPrediction(MatrixXd &Xsig_aug, double &delta_t){
   // predict sigma points
-  for (int i = 0; i< 2*n_aug_+1; i++) {
-    // extract values for better readability
-    double px = Xsig_aug(0,i);
-    double py = Xsig_aug(1,i);
-    double v = Xsig_aug(2,i);
-    double yaw = Xsig_aug(3,i);
-    double yawd = Xsig_aug(4,i);
-    double nu_a = Xsig_aug(5,i);
-    double nu_yawdd = Xsig_aug(6,i);
+  for (int i = 0; i < 2 * n_aug_ + 1; ++i) {
+    // extract state vector elements
+    double px = Xsig_aug(0, i);
+    double py = Xsig_aug(1, i);
+    double v = Xsig_aug(2, i);
+    double yaw = Xsig_aug(3, i);
+    double yawd = Xsig_aug(4, i);
+    double nu_a = Xsig_aug(5, i);
+    double nu_yawdd = Xsig_aug(6, i);
+
+    // predict the states
+    double px_pred, py_pred;
 
     // avoid division by zero
-    if(fabs(yawd) < 0.001){
-      Xsig_pred_(0, i) = px + (v * cos(yaw) * delta_t) + (0.5 * delta_t*delta_t*cos(yaw)*nu_a);  
-      Xsig_pred_(1, i) = py + (v * sin(yaw) * delta_t) + (0.5 * delta_t*delta_t*sin(yaw)*nu_a);  
-    }else{
-      Xsig_pred_(0, i) = px + v/yawd * ( sin (yaw + yawd*delta_t) - sin(yaw)) + (0.5 * delta_t*delta_t*cos(yaw)*nu_a);  
-      Xsig_pred_(1, i) = py + v/yawd * ( cos(yaw) - cos(yaw+yawd*delta_t) ) + (0.5 * delta_t*delta_t*sin(yaw)*nu_a);   
+    if (fabs(yawd) > 0.001) {
+      px_pred = px + v / yawd * (sin(yaw + yawd * delta_t) - sin(yaw));
+      py_pred = py + v / yawd * (-1 * cos(yaw + yawd * delta_t) + cos(yaw));
     }
-    Xsig_pred_(2, i) = v + delta_t * nu_a;
-    Xsig_pred_(3, i) = yaw + 0.5 * delta_t * delta_t * nu_yawdd;
-    Xsig_pred_(4, i) = yawd + delta_t * nu_yawdd;
+    else {
+      px_pred = px + v * cos(yaw) * delta_t;
+      py_pred = py + v * sin(yaw) * delta_t;
+    }
+
+    double v_pred = v;
+    double yaw_pred = yaw + yawd * delta_t;
+    double yawd_pred = yawd;
+
+    // add noise
+    px_pred += 0.5 * delta_t * delta_t * cos(yaw) * nu_a;
+    py_pred += 0.5 * delta_t * delta_t * sin(yaw) * nu_a;
+    v_pred += delta_t * nu_a;
+    yaw_pred += 0.5 * delta_t * delta_t * nu_yawdd;
+    yawd_pred += delta_t * nu_yawdd;
+
+  // write predicted sigma points into right column
+    Xsig_pred_(0, i) = px_pred;
+    Xsig_pred_(1, i) = py_pred;
+    Xsig_pred_(2, i) = v_pred;
+    Xsig_pred_(3, i) = yaw_pred;
+    Xsig_pred_(4, i) = yawd_pred;
   }
 }
 
